@@ -1,190 +1,159 @@
 function Read-FromSQLTable {
     <#
-    
         .SYNOPSIS
+        Reads rows from a SQL Server table.
 
         .DESCRIPTION
-        
+        This function queries a SQL Server table and supports
+        selecting all columns or a subset with modifiers like TOP or DISTINCT.
+        You can pass an existing connection or let the function create its own.
+
         .PARAMETER SelectKeys
-        Array of Strings to be used as column names to select.
-        Used as a part of CreateConnSome/PassedConnSome Parameter Sets
+        Array of column names to select.
 
         .PARAMETER SelectAll
-        Switch to state this will be a 'SELECT *' command.
-        Used as a part of CreateConnAll/PassedConnAll Parameter Sets
+        Switch to select all columns ("SELECT *").
 
         .PARAMETER SelectModifier
-        Used as a part of CreateConnSome/PassedConnSome Parameter Sets
-
-        .PARAMETER Order
-
-        .PARAMETER OrderBy
+        Optional modifier ("TOP" or "DISTINCT") applied to the query.
 
         .PARAMETER NumRows
-        String parameter that specifies the number of rows to query in combination with 'TOP' Select modifier.
-        Used as a part of CreateConnSome/PassedConnSome Parameter Sets
+        Number of rows to return if SelectModifier is TOP.
+
+        .PARAMETER Order
+        Sort order (ASCENDING or DESCENDING).
+
+        .PARAMETER OrderBy
+        Column to order the results by.
 
         .PARAMETER Table
-        String parameter that specified the SQL table being accessed. Used to build 
-        the SQL Commands
+        The SQL table name.
 
         .PARAMETER Schema
-        String parameter that specified the SQL schema being accessed. Used to build 
-        the SQL Commands
+        The schema the table belongs to.
 
         .PARAMETER Database
-        String parameter that specified the SQL Database being accessed. Used to build 
-        the SQL Commands
+        The target database.
 
         .PARAMETER Server
-        String parameter that specified the SQL Server being accessed. Used to build 
-        the SQL Commands
+        The SQL Server instance (required if no connection is passed).
 
-        .PARAMETER Conn
-        [System.Data.SqlClient.SqlConnection] object that is used to execute SQL commands
-        on the server. A connection object that is passed in is returned to the state it
-        was in when passed in.
-    
-        .EXAMPLE
+        .PARAMETER Connection
+        A [System.Data.SqlClient.SqlConnection] object (optional).
+        If passed, the function respects its state and does not close it.
     #>
     [CmdletBinding(DefaultParameterSetName = 'CreateConnAll')]
     param(
-        [Parameter(Mandatory, ParameterSetName='CreateConnSome', position=0)]
-        [Parameter(Mandatory, ParameterSetName='PassedConnSome', position=0)]
-        [Array]$SelectKeys,
-        [Parameter(Mandatory, ParameterSetName='CreateConnAll', position=0)]
-        [Parameter(Mandatory, ParameterSetName='PassedConnAll', position=0)]
+        [Parameter(Mandatory, ParameterSetName='CreateConnSome', Position=0)]
+        [Parameter(Mandatory, ParameterSetName='PassedConnSome', Position=0)]
+        [string[]]$SelectKeys,
+
+        [Parameter(Mandatory, ParameterSetName='CreateConnAll', Position=0)]
+        [Parameter(Mandatory, ParameterSetName='PassedConnAll', Position=0)]
         [switch]$SelectAll,
+
         [Parameter(ParameterSetName='CreateConnSome')]
         [Parameter(ParameterSetName='PassedConnSome')]
         [ValidateSet("TOP", "DISTINCT")]
-        [String]$SelectModifier = "TOP",
+        [string]$SelectModifier = "TOP",
+
         [Parameter(ParameterSetName='CreateConnSome')]
         [Parameter(ParameterSetName='PassedConnSome')]
-        [String]$NumRows = "1",
-        [Parameter(ParameterSetName='CreateConnSomeOrder')]
-        [Parameter(ParameterSetName='PassedConnSomeOrder')]
-        [Parameter(ParameterSetName='CreateConnAllOrder')]
-        [Parameter(ParameterSetName='PassedConnAllOrder')]
+        [int]$NumRows = 1,
+
+        [Parameter(ParameterSetName='*Order')]
         [ValidateSet("ASCENDING", "DESCENDING")]
-        [String]$Order = "DESCENDING",
-        [Parameter(ParameterSetName='CreateConnSomeOrder')]
-        [Parameter(ParameterSetName='PassedConnSomeOrder')]
-        [Parameter(ParameterSetName='CreateConnAllOrder')]
-        [Parameter(ParameterSetName='PassedConnAllOrder')]
-        [String]$OrderBy = "",
-        [Parameter(ParameterSetName='CreateConnAll')]
-        [Parameter(ParameterSetName='PassedConnAll')]
-        [Parameter(ParameterSetName='CreateConnSome')]
-        [Parameter(ParameterSetName='PassedConnSome')]
-        [String]$Table = "master",
-        [Parameter(ParameterSetName='CreateConnAll')]
-        [Parameter(ParameterSetName='PassedConnAll')]
-        [Parameter(ParameterSetName='CreateConnSome')]
-        [Parameter(ParameterSetName='PassedConnSome')]
-        [String]$Schema = "dbo",
-        [Parameter(Mandatory, ParameterSetName='CreateConnAll', position=1)]
-        [Parameter(Mandatory, ParameterSetName='PassedConnAll', position=1)]
-        [Parameter(Mandatory, ParameterSetName='CreateConnSome', position=1)]
-        [Parameter(Mandatory, ParameterSetName='PassedConnSome', position=1)]
-        [String]$Database,
-        [Parameter(Mandatory, ParameterSetName='CreateConnAll', position=2)]
-        [Parameter(Mandatory, ParameterSetName='CreateConnSome', position=2)]
-        [String]$Server,
-        [Parameter(Mandatory, ParameterSetName='PassedConnAll', position=2)]
-        [Parameter(Mandatory, ParameterSetName='PassedConnSome', position=2)]
-        [System.Data.SqlClient.SqlConnection]$Connection = $null
+        [string]$Order = "DESCENDING",
+
+        [Parameter(ParameterSetName='*Order')]
+        [string]$OrderBy = "",
+
+        [Parameter(ParameterSetName='*')]
+        [string]$Table,
+
+        [Parameter(ParameterSetName='*')]
+        [string]$Schema = "dbo",
+
+        [Parameter(Mandatory, ParameterSetName='*', Position=1)]
+        [string]$Database,
+
+        [Parameter(Mandatory, ParameterSetName='CreateConn*', Position=2)]
+        [string]$Server,
+
+        [Parameter(Mandatory, ParameterSetName='PassedConn*', Position=2)]
+        [System.Data.SqlClient.SqlConnection]$Connection
     )
 
-    begin{
-        if ($PSCmdlet.ParameterSetName -eq "CreateConnAll" -or $PSCmdlet.ParameterSetName -eq "CreateConnSome"){
-            $conn = New-Object System.Data.SqlClient.SqlConnection
-                $conn.ConnectionString = "Server = $($server); Database = $($database); Integrated Security = True"
-                try{
-                    $conn.open()
-                } catch [System.Data.SqlClient.SqlException]{
-                    write-error "database not accessible to user account"
-                        return $null
-                }
-        } else {
-            $passedConnState = $conn.State
-                if ($passedConnState -eq "Closed"){
-                    $conn.Open()
-                }
+    begin {
+        $createdConnection = $false
+
+        if (-not $Connection) {
+            $Connection = New-Object System.Data.SqlClient.SqlConnection
+            $Connection.ConnectionString = "Server=$Server; Database=$Database; Integrated Security=True"
+            try {
+                $Connection.Open()
+                $createdConnection = $true
+            }
+            catch {
+                Write-Error "Failed to connect to [$Server]\$Database. Error: $_"
+                return
+            }
+        }
+        elseif ($Connection.State -ne "Open") {
+            $Connection.Open()
         }
 
-        $query = New-Object System.Data.SqlClient.SqlCommand
-        $query.connection = $conn
-
+        $query = $Connection.CreateCommand()
         $adapter = New-Object System.Data.SqlClient.SqlDataAdapter
-        $ds = New-Object System.Data.DataSet
+    }
 
-        if ($PSCmdlet.ParameterSetName -eq "CreateConnSome" -or $PSCmdlet.ParameterSetName -eq "PassedConnSome"){
-            $query.CommandText = "SELECT * FROM [$($Database)].[$($Schema)].[$($Table)];"
-            $adapter.SelectCommand = $query
-            $adapter.fill($ds)
-            $SelectKeys | ForEach-Object {
-                if ($_ -notin $ds.Tables.Columns.ColumnName){
-                    Throw "Key in Search Object hashtable does not correspond to column of selected table"
-                    return 0;
-                }
-            }
-            if ($SelectModifier -eq "DISTINCT" -and ($SelectKeys.count) -gt 1){
-                Throw "`'DISTINCT`' Modifier cannot be used with multiple Select Keys"
-            }
+    process {
+        # Build column list
+        $keysFormatted = if ($SelectAll) {
+            "*"
+        }
+        else {
+            $SelectKeys | ForEach-Object { "[" + $_ + "]" } -join ", "
         }
 
-    } process {
-        $queryText = ""
-        $KeysFormatted = ""
-        
-        if ($PSCmdlet.ParameterSetName -eq "CreateConnAll" -or $PSCmdlet.ParameterSetName -eq "PassedConnAll"){
-            $KeysFormatted = "*"
-        } else {
-            $counter = 0
-            $SelectKeys | ForEach-Object {
-                $KeysFormatted += (ConvertTo-SQLColumnName $($_))
-                    $counter += 1
-
-                    if ($counter -lt $SelectKeys.Count){
-                        $KeysFormatted += ", "
-                    }
-            }
+        # Start query
+        if ($SelectAll) {
+            $queryText = "SELECT $keysFormatted FROM [$Schema].[$Table]"
         }
-
-        if ($PSCmdlet.ParameterSetName -eq "CreateConnSome" -or $PSCmdlet.ParameterSetName -eq "PassedConnSome"){
-            $queryText = "SELECT $($SelectModifier)" 
+        else {
+            $queryText = "SELECT $SelectModifier"
             if ($SelectModifier -eq "TOP") {
-                $queryText += " ($($NumRows))"
+                $queryText += " ($NumRows)"
             }
-            $queryText += " $($KeysFormatted) FROM [$($Database)].[$($Schema)].[$($Table)]"
-        } else {
-            $queryText = "SELECT * FROM [$($database)].[$($schema)].[$($table)]"
-        }
-        if ($PSCmdlet.ParameterSetName -like "*Order*"){
-            $queryText += " ORDER BY $(ConverTO-SQLColumnName $OrderBy) "
-            if ($Order -eq "ASCENDING"){
-                $queryText += "ASC;"
-            } else {
-                $queryText += "DESC;"
-            }
+            $queryText += " $keysFormatted FROM [$Schema].[$Table]"
         }
 
-        write-Verbose $queryText
-    } end {
-        $ret = New-Object System.Data.DataSet
+        # Add ORDER BY if specified
+        if ($OrderBy) {
+            $queryText += " ORDER BY [$OrderBy] "
+            $queryText += if ($Order -eq "ASCENDING") { "ASC" } else { "DESC" }
+        }
+
+        Write-Verbose "Executing query: $queryText"
+
+        # Run query
+        $ds = New-Object System.Data.DataSet
         $query.CommandText = $queryText
         $adapter.SelectCommand = $query
-        $adapter.fill($ret)
-
-        if ($PSCmdlet.ParameterSetName -eq "CreateConnAll" -or $PSCmdlet.ParameterSetName -eq "CreateConnSome"){
-            $conn.close()
-        } else {
-            if ($passedConnState -eq "Closed"){
-                $conn.close()
-            }
+        try {
+            $adapter.Fill($ds) | Out-Null
         }
-        write-host $PSCmdlet.ParameterSetName
-        return $ret.tables
+        catch {
+            Write-Error "Query execution failed. Error: $_"
+            return
+        }
+
+        $ds.Tables
+    }
+
+    end {
+        if ($createdConnection -and $Connection.State -eq "Open") {
+            $Connection.Close()
+        }
     }
 }
